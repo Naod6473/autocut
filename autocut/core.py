@@ -5,6 +5,8 @@ Ce module ne dépend pas de l'interface graphique, il peut être testé seul.
 
 from __future__ import annotations
 
+import csv
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -15,6 +17,8 @@ import soundfile as sf
 
 SUPPORTED_INPUT = (".wav", ".mp3", ".ogg", ".flac", ".aif", ".aiff")
 EXPORT_FORMATS = ("wav", "mp3", "ogg")
+DEFAULT_TEMPLATE = "{titre}_{n}"
+SESSION_VERSION = 1
 
 
 @dataclass
@@ -68,12 +72,12 @@ class Track:
     def channels(self) -> int:
         return self.data.shape[1]
 
-    def resolved_names(self) -> list[str]:
+    def resolved_names(self, template: str = DEFAULT_TEMPLATE) -> list[str]:
         """Noms de fichier finaux (sans extension), uniques, dans l'ordre des sons."""
-        numbered = numbered_names(self.base_title or self.path.stem, len(self.segments), self.start_index, self.digits)
-        if self.naming_mode == "unique":
-            return numbered
-        return unique_names([sanitize_filename(s.name) if s.name.strip() else numbered[i] for i, s in enumerate(self.segments)])
+        numbered = render_names(template, self.base_title or self.path.stem, self.path.stem, len(self.segments), self.start_index, self.digits)
+        if self.naming_mode == "multiple":
+            numbered = [sanitize_filename(s.name) if s.name.strip() else numbered[i] for i, s in enumerate(self.segments)]
+        return unique_names(numbered)
 
 
 def load_track(path: str | os.PathLike) -> Track:
@@ -157,6 +161,17 @@ def numbered_names(title: str, count: int, start: int = 1, digits: int = 2, sep:
     return [f"{title}{sep}{i:0{digits}d}" for i in range(start, start + count)]
 
 
+def render_names(template: str, title: str, track: str, count: int, start: int = 1, digits: int = 2) -> list[str]:
+    """Applique un modèle de nom. Étiquettes : {titre}, {n} (numéro), {piste} (nom du fichier source)."""
+    template = template.strip() or DEFAULT_TEMPLATE
+    digits = max(digits, len(str(start + count - 1)))
+    out = []
+    for i in range(start, start + count):
+        name = template.replace("{titre}", title).replace("{piste}", track).replace("{n}", f"{i:0{digits}d}")
+        out.append(sanitize_filename(name))
+    return out
+
+
 def names_from_text(text: str) -> list[str]:
     """Une ligne = un nom ; les lignes vides sont ignorées."""
     return [sanitize_filename(line) for line in text.splitlines() if line.strip()]
@@ -231,11 +246,13 @@ def write_clip(path: Path, clip: np.ndarray, sr: int, settings: ExportSettings) 
         raise ValueError(f"Format inconnu : {settings.fmt}")
 
 
-def export_track(track: Track, out_dir: str | os.PathLike, settings: ExportSettings, overwrite: bool = False) -> list[Path]:
-    """Exporte tous les segments d'une piste. Renvoie les fichiers créés."""
+def export_track(
+    track: Track, out_dir: str | os.PathLike, settings: ExportSettings, overwrite: bool = False, template: str = DEFAULT_TEMPLATE
+) -> list[Path]:
+    """Exporte tous les segments d'une piste. Renvoie les fichiers créés, dans l'ordre des sons."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    names = track.resolved_names()
+    names = track.resolved_names(template)
 
     written = []
     ext = settings.fmt.lower()
@@ -250,6 +267,68 @@ def export_track(track: Track, out_dir: str | os.PathLike, settings: ExportSetti
         write_clip(path, clip, sr, settings)
         written.append(path)
     return written
+
+
+def write_listing(path: str | os.PathLike, exported: list[tuple[Track, list[Path]]]) -> Path:
+    """Écrit un CSV des sons exportés : fichier (relatif au CSV), piste source, début, fin, durée en secondes."""
+    path = Path(path)
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["fichier", "piste_source", "debut_s", "fin_s", "duree_s"])
+        for track, files in exported:
+            sr = track.samplerate
+            for seg, file in zip(track.segments, files):
+                rel = Path(os.path.relpath(file, path.parent)).as_posix()
+                w.writerow([rel, track.path.name, f"{seg.start / sr:.3f}", f"{seg.end / sr:.3f}", f"{seg.length / sr:.3f}"])
+    return path
+
+
+# --- Sessions ----------------------------------------------------------------
+
+
+def save_session(path: str | os.PathLike, tracks: list[Track], settings: dict | None = None) -> None:
+    """Enregistre le découpage (pas l'audio) dans un fichier .autocut (JSON)."""
+    path = Path(path)
+    doc = {
+        "version": SESSION_VERSION,
+        "settings": settings or {},
+        "tracks": [
+            {
+                "path": str(t.path.resolve()),
+                "base_title": t.base_title,
+                "naming_mode": t.naming_mode,
+                "start_index": t.start_index,
+                "digits": t.digits,
+                "segments": [[s.start, s.end, s.name] for s in t.segments],
+            }
+            for t in tracks
+        ],
+    }
+    path.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def load_session(path: str | os.PathLike) -> tuple[list[Track], dict, list[str]]:
+    """Recharge une session. Renvoie (pistes, réglages, erreurs pour les fichiers introuvables)."""
+    path = Path(path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    tracks, errors = [], []
+    for item in doc.get("tracks", []):
+        src = Path(item["path"])
+        if not src.exists() and (path.parent / src.name).exists():
+            src = path.parent / src.name  # session déplacée avec ses fichiers audio
+        try:
+            t = load_track(src)
+        except Exception as exc:
+            errors.append(f"{src.name} : {exc}")
+            continue
+        t.base_title = item.get("base_title", t.base_title)
+        t.naming_mode = item.get("naming_mode", "unique")
+        t.start_index = int(item.get("start_index", 1))
+        t.digits = int(item.get("digits", 2))
+        total = len(t.data)
+        t.segments = [Segment(max(0, int(a)), min(total, int(b)), n) for a, b, n in item.get("segments", []) if int(a) < min(total, int(b))]
+        tracks.append(t)
+    return tracks, doc.get("settings", {}), errors
 
 
 def format_time(seconds: float) -> str:

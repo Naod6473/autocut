@@ -5,12 +5,13 @@ Application Windows pour découper des pistes de bruitages (SFX) en sons sépar�
 ## Fonctionnalités
 
 - **Une ou plusieurs pistes** : glisse des fichiers ou un dossier entier dans la fenêtre (WAV, MP3, OGG, FLAC, AIFF).
-- **Détection automatique** des sons séparés par du silence, avec seuil, silence minimum, son minimum et marge réglables.
+- **Détection automatique** des sons séparés par du silence, avec seuil, silence minimum, son minimum et marge réglables, et des **préréglages** (fournis ou enregistrés par toi).
 - **Forme d'onde éditable** : glisser les bords d'un son, dessiner un nouveau son, couper, fusionner, supprimer, annuler (Ctrl+Z).
-- **Écoute** d'un son d'un clic (ou Espace), ou de la piste entière.
-- **Nommage** : titre unique numéroté (`Porte_01`, `Porte_02`…) ou un nom par son, tapé dans le tableau ou collé sous forme de liste.
-- **Export** en WAV (16, 24 ou 32 bits), MP3 ou OGG, avec en option : mono, fréquence (22,05 / 44,1 / 48 kHz), normalisation, fondus d'entrée et de sortie, un sous-dossier par piste.
-- Les réglages sont mémorisés d'une session à l'autre.
+- **Écoute** d'un son d'un clic (ou Espace), son par son avec ↑/↓, tout à la suite (Ctrl+Espace), en option avec les réglages d'export appliqués.
+- **Nommage** : un titre numéroté ou un nom par son (tapé dans le tableau ou collé sous forme de liste), avec un **modèle** commun comme `SFX_{titre}_{n}` (étiquettes `{titre}`, `{n}`, `{piste}`).
+- **Export** en WAV (16, 24 ou 32 bits), MP3 ou OGG, avec en option : mono, fréquence (22,05 / 44,1 / 48 kHz), normalisation, fondus, un sous-dossier par piste et une **liste CSV** des sons (`liste_sons.csv`).
+- **Sessions** : Ctrl+S enregistre le découpage dans un fichier `.autocut` pour le reprendre plus tard.
+- Thème sombre, réglages mémorisés d'une session à l'autre.
 
 ## Télécharger le .exe
 
@@ -34,6 +35,8 @@ Pour lancer depuis les sources sans fabriquer l'exe : `lancer.bat`.
 | Action | Comment |
 | --- | --- |
 | Écouter un son | Clic dessus, ou Espace |
+| Son précédent / suivant | ↑ / ↓ |
+| Tout écouter à la suite | Ctrl+Espace |
 | Arrêter | Échap |
 | Ajuster un son | Glisser un de ses bords |
 | Créer un son | Glisser dans une zone vide |
@@ -57,4 +60,4 @@ python -m pytest
 python -m autocut
 ```
 
-Le code : `autocut/core.py` (détection, nommage, export, sans interface), `autocut/waveform.py` (forme d'onde), `autocut/app.py` (fenêtre principale).
+Le code : `autocut/core.py` (détection, nommage, export, sessions, sans interface), `autocut/waveform.py` (forme d'onde), `autocut/theme.py` (thème et icônes), `autocut/app.py` (fenêtre principale). L'icône de l'appli est dessinée par `tools/make_icon.py`.

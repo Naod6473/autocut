@@ -2,6 +2,7 @@
 # La bibliothèque libsndfile de soundfile est récupérée par le hook de pyinstaller-hooks-contrib.
 a = Analysis(
     ["run_autocut.py"],
+    datas=[("autocut/assets", "autocut/assets")],
     hiddenimports=["soxr"],
     excludes=["tkinter", "matplotlib", "scipy", "PySide6.QtWebEngineCore", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtPdf"],
 )
@@ -12,6 +13,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     name="Autocut",
+    icon="autocut/assets/autocut.ico",
     console=False,
     upx=False,
 )

@@ -11,11 +11,15 @@ from autocut.core import (
     Track,
     detect_segments,
     export_track,
+    load_session,
     load_track,
     names_from_text,
     numbered_names,
+    render_names,
+    save_session,
     sanitize_filename,
     unique_names,
+    write_listing,
 )
 
 SR = 44100
@@ -109,3 +113,38 @@ def test_unique_mode_ignores_custom_names():
     assert track.resolved_names() == ["Porte_05", "Porte_06"]
     track.naming_mode = "multiple"
     assert track.resolved_names() == ["x", "y"]
+
+
+def test_name_template():
+    assert render_names("SFX_{titre}_{n}", "Porte", "pack", 2) == ["SFX_Porte_01", "SFX_Porte_02"]
+    assert render_names("{piste}-{n}", "x", "pack 3", 1, start=7, digits=3) == ["pack 3-007"]
+    assert render_names("", "Porte", "pack", 1) == ["Porte_01"]
+    assert render_names("a/{titre}", "b", "p", 1) == ["a_b"]
+    track = Track(path=Path("pack.wav"), data=make_track([burst(0.2)]), samplerate=SR, base_title="Pas")
+    track.segments = [Segment(0, 10), Segment(10, 20)]
+    assert track.resolved_names("{titre}") == ["Pas", "Pas_2"]
+
+
+def test_listing_and_session_roundtrip(tmp_path):
+    src = tmp_path / "pack.wav"
+    sf.write(src, make_track([silence(0.2), burst(0.3), silence(0.4), burst(0.3), silence(0.2)]), SR)
+    track = load_track(src)
+    track.segments = detect_segments(track.data, SR, DetectionSettings())
+    track.naming_mode, track.start_index = "multiple", 3
+    track.segments[0].name = "Coup"
+    files = export_track(track, tmp_path / "out", ExportSettings())
+    csv_text = write_listing(tmp_path / "out" / "liste.csv", [(track, files)]).read_text(encoding="utf-8-sig")
+    assert csv_text.splitlines()[0] == "fichier,piste_source,debut_s,fin_s,duree_s"
+    assert csv_text.splitlines()[1].startswith("Coup.wav,pack.wav,")
+    assert csv_text.splitlines()[2].startswith("pack_04.wav,")
+
+    save_session(tmp_path / "s.autocut", [track], {"template": "X_{n}"})
+    tracks, settings, errors = load_session(tmp_path / "s.autocut")
+    assert errors == [] and settings == {"template": "X_{n}"}
+    t = tracks[0]
+    assert [(s.start, s.end, s.name) for s in t.segments] == [(s.start, s.end, s.name) for s in track.segments]
+    assert (t.naming_mode, t.start_index) == ("multiple", 3)
+
+    src.unlink()
+    _, _, errors = load_session(tmp_path / "s.autocut")
+    assert len(errors) == 1

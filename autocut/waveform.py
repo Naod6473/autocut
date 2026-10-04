@@ -7,23 +7,23 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QMenu, QWidget
 
-from .core import Segment, Track, format_time
+from .core import DEFAULT_TEMPLATE, Segment, Track, format_time
 
 EDGE_GRAB_PX = 6
 PEAK_BLOCK = 256
 
 COLORS = {
-    "bg": QColor("#1e1f24"),
+    "bg": QColor("#16181c"),
     "wave": QColor("#7f8ea3"),
     "wave_in": QColor("#c8d4e6"),
     "axis": QColor("#3a3d46"),
     "seg_a": QColor(76, 145, 255, 55),
     "seg_b": QColor(60, 200, 160, 55),
-    "seg_sel": QColor(255, 190, 60, 90),
+    "seg_sel": QColor(255, 138, 61, 70),
     "edge": QColor("#e8e8e8"),
-    "edge_sel": QColor("#ffbe3c"),
+    "edge_sel": QColor("#ff8a3d"),
     "text": QColor("#e8e8e8"),
-    "playhead": QColor("#ff5a5a"),
+    "playhead": QColor("#ffffff"),
     "draft": QColor(255, 255, 255, 50),
 }
 
@@ -43,6 +43,7 @@ class WaveformView(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.track: Track | None = None
+        self.template = DEFAULT_TEMPLATE
         self.peaks: np.ndarray | None = None  # (blocs, 2) min/max sur toutes les voies
         self.view_start = 0
         self.view_end = 1
@@ -155,7 +156,7 @@ class WaveformView(QWidget):
         font = QFont(self.font())
         font.setPointSize(8)
         p.setFont(font)
-        names = self.track.resolved_names()
+        names = self.track.resolved_names(self.template)
         for i, seg in enumerate(self.segments):
             x0, x1 = self.frame_to_x(seg.start), self.frame_to_x(seg.end)
             if x1 < 0 or x0 > w:
