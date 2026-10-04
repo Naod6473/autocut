@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import copy
 import json
+import random
 import sys
 import tempfile
 import traceback
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QSettings, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
@@ -58,14 +60,17 @@ from .core import (
     ExportSettings,
     Track,
     detect_segments,
+    estimate_threshold,
     export_track,
     format_time,
+    group_variations,
     load_session,
     load_track,
     names_from_text,
     process_segment,
     sanitize_filename,
     save_session,
+    variation_params,
     write_listing,
 )
 from .theme import Section, app_icon, apply_theme, asset_path, icon
@@ -75,6 +80,11 @@ SESSION_EXT = ".autocut"
 SAMPLERATES = [("Fréquence d'origine", None), ("22 050 Hz", 22050), ("44 100 Hz", 44100), ("48 000 Hz", 48000)]
 MP3_QUALITIES = [("Haute", 0.0), ("Normale", 0.3), ("Légère", 0.6)]
 WAV_DEPTHS = [("16 bits", "PCM_16"), ("24 bits", "PCM_24"), ("32 bits flottant", "FLOAT")]
+NORM_MODES = [("dBFS crête", "peak"), ("LUFS (volume perçu)", "lufs")]
+HIGHPASS = [("Aucun", 0.0), ("40 Hz", 40.0), ("80 Hz", 80.0), ("120 Hz", 120.0)]
+FADE_CURVES = [("Linéaire", "linear"), ("Douce (en S)", "smooth"), ("Rapide", "sharp")]
+LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+COL_NAME, COL_LOOP = 4, 5
 LISTING_NAME = "liste_sons.csv"
 
 # Préréglages de détection fournis : (seuil dB, silence min ms, son min ms, marge ms)
@@ -185,6 +195,7 @@ class MainWindow(QMainWindow):
         self.a_undo = A("Annuler", self.undo_edit, "Ctrl+Z", "undo")
         self.a_redo = A("Rétablir", self.redo_edit, "Ctrl+Y", "redo")
         self.a_delete = A("Supprimer le son", self.delete_selected, "Delete", "trash")
+        self.a_loop = A("Boucle sans coupure", self.toggle_loop, "L", None, "Exporter ce son comme une boucle sans coupure (L)")
         self.a_play = A("Écouter le son", self.play_selected, "Space", "play")
         self.a_play_all = A("Tout écouter à la suite", self.play_all, "Ctrl+Space", "playall")
         self.a_play_track = A("Écouter la piste entière", self.play_track, None)
@@ -206,7 +217,7 @@ class MainWindow(QMainWindow):
         for a in (self.a_open, self.a_open_session, None, self.a_save_session, self.a_save_session_as, None, self.a_remove, None, self.a_export, self.a_export_all, None, self.a_quit):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("É&dition")
-        for a in (self.a_undo, self.a_redo, None, self.a_delete):
+        for a in (self.a_undo, self.a_redo, None, self.a_delete, self.a_loop):
             m.addSeparator() if a is None else m.addAction(a)
         m = mb.addMenu("&Lecture")
         for a in (self.a_play, self.a_play_all, self.a_play_track, self.a_stop, None, self.a_prev, self.a_next, None, self.a_preview_fx):
@@ -293,8 +304,8 @@ class MainWindow(QMainWindow):
             "Clic droit : couper, fusionner, supprimer · Molette : zoom · Maj+molette : défiler"
         )
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["#", "Début", "Fin", "Durée", "Nom du fichier"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["#", "Début", "Fin", "Durée", "Nom du fichier", "Boucle"])
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
@@ -303,7 +314,9 @@ class MainWindow(QMainWindow):
         hh = self.table.horizontalHeader()
         for c in range(4):
             hh.setSectionResizeMode(c, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(4, QHeaderView.Stretch)
+        hh.setSectionResizeMode(COL_NAME, QHeaderView.Stretch)
+        hh.setSectionResizeMode(COL_LOOP, QHeaderView.ResizeToContents)
+        self.table.horizontalHeaderItem(COL_LOOP).setToolTip("Boucle sans coupure : la fin du son est fondue sur son début à l'export (ambiances)")
         hh.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.table.itemSelectionChanged.connect(self._on_table_selection)
         self.table.itemChanged.connect(self._on_table_edit)
@@ -401,7 +414,13 @@ class MainWindow(QMainWindow):
         self.det_minsound.setToolTip("Les sons plus courts sont ignorés (clics, bruits parasites).")
         self.det_padding = _spin(0, 1000, 20, 5, " ms")
         self.det_padding.setToolTip("Marge gardée avant et après chaque son pour ne pas couper l'attaque ou la queue.")
-        f.addRow("Seuil de silence", self.det_threshold)
+        threshold_row = QHBoxLayout()
+        threshold_row.addWidget(self.det_threshold, 1)
+        self.det_auto_threshold = QPushButton("Auto")
+        self.det_auto_threshold.setToolTip("Régler le seuil d'après le bruit de fond de la piste, puis relancer la détection")
+        self.det_auto_threshold.clicked.connect(self.auto_threshold)
+        threshold_row.addWidget(self.det_auto_threshold)
+        f.addRow("Seuil de silence", threshold_row)
         f.addRow("Silence minimum", self.det_silence)
         f.addRow("Son minimum", self.det_minsound)
         f.addRow("Marge", self.det_padding)
@@ -464,6 +483,14 @@ class MainWindow(QMainWindow):
         self.btn_paste = QPushButton(icon("list"), " Coller une liste de noms…")
         self.btn_paste.clicked.connect(self.paste_names)
         f.addRow(self.btn_paste)
+        self.name_repeats = QCheckBox("Numéroter les noms répétés (pas_01, pas_02…)")
+        self.name_repeats.setChecked(True)
+        self.name_repeats.toggled.connect(self._refresh_all)
+        f.addRow(self.name_repeats)
+        self.btn_variations = QPushButton("Repérer les variantes")
+        self.btn_variations.setToolTip("Regroupe les sons qui se ressemblent (timbre et durée) et leur donne un nom commun")
+        self.btn_variations.clicked.connect(self.find_variations)
+        f.addRow(self.btn_variations)
         f.addRow(_muted("En mode « un nom par son », double-clique sur un nom dans le tableau pour le modifier."))
         return w
 
@@ -484,8 +511,34 @@ class MainWindow(QMainWindow):
         self.exp_mono = QCheckBox("Convertir en mono")
         self.exp_norm = QCheckBox("Normaliser à")
         self.exp_norm_db = _spin(-30, 0, -1, 0.5, " dBFS", 1)
+        self.exp_norm_lufs = _spin(-40, -6, -16, 1, " LUFS")
+        self.exp_norm_mode = QComboBox()
+        for label, _ in NORM_MODES:
+            self.exp_norm_mode.addItem(label)
+        self.exp_norm_mode.setToolTip("Crête : même niveau maximal pour chaque son. LUFS : même volume perçu (norme ITU-R BS.1770), crête limitée à -1 dBFS.")
+        self.exp_norm_mode.currentIndexChanged.connect(self._on_norm_mode)
+        self.exp_highpass = QComboBox()
+        for label, _ in HIGHPASS:
+            self.exp_highpass.addItem(label)
+        self.exp_highpass.setToolTip("Retire les grondements graves : vent, manipulation, ventilation")
+        self.exp_trim = QCheckBox("Rogner les silences restants")
+        self.exp_trim.setToolTip("Retire ce qui reste sous le seuil de silence au début et à la fin de chaque son")
         self.exp_fade_in = _spin(0, 2000, 0, 1, " ms")
         self.exp_fade_out = _spin(0, 5000, 5, 1, " ms")
+        self.exp_curve = QComboBox()
+        for label, _ in FADE_CURVES:
+            self.exp_curve.addItem(label)
+        self.exp_curve.setToolTip("Douce : ni attaque sèche ni coupure audible. Rapide : le son baisse vite puis s'éteint en douceur (impacts).")
+        self.exp_loop_fade = _spin(10, 5000, 200, 10, " ms")
+        self.exp_loop_fade.setToolTip("Durée du fondu enchaîné qui relie la fin d'une boucle à son début")
+        self.exp_variants = QSpinBox()
+        self.exp_variants.setRange(0, 8)
+        self.exp_variants.setSpecialValueText("Aucune")
+        self.exp_variants.setButtonSymbols(QSpinBox.NoButtons)
+        self.exp_variants.setToolTip("Chaque son est aussi exporté en versions un peu plus aiguës ou graves et moins fortes (porte_v1, porte_v2…), pour éviter l'effet répétitif dans un jeu")
+        self.exp_variant_pitch = _spin(0, 12, 1, 0.5, " demi-ton(s)", 1)
+        self.exp_variant_volume = _spin(0, 12, 2, 0.5, " dB", 1)
+        self.exp_variants.valueChanged.connect(lambda n: (self.exp_variant_pitch.setEnabled(n > 0), self.exp_variant_volume.setEnabled(n > 0)))
         self.exp_dir = QLineEdit()
         browse = QToolButton()
         browse.setIcon(icon("open"))
@@ -514,9 +567,18 @@ class MainWindow(QMainWindow):
         norm_row = QHBoxLayout()
         norm_row.addWidget(self.exp_norm)
         norm_row.addWidget(self.exp_norm_db, 1)
+        norm_row.addWidget(self.exp_norm_lufs, 1)
+        norm_row.addWidget(self.exp_norm_mode)
         f.addRow(norm_row)
+        f.addRow("Coupe-bas", self.exp_highpass)
+        f.addRow(self.exp_trim)
         f.addRow("Fondu d'entrée", self.exp_fade_in)
         f.addRow("Fondu de sortie", self.exp_fade_out)
+        f.addRow("Forme des fondus", self.exp_curve)
+        f.addRow("Fondu de boucle", self.exp_loop_fade)
+        f.addRow("Variations par son", self.exp_variants)
+        f.addRow("Hauteur ±", self.exp_variant_pitch)
+        f.addRow("Volume jusqu'à −", self.exp_variant_volume)
         f.addRow(self.exp_preview)
         f.addRow("Dossier", dir_row)
         f.addRow(self.exp_subdir)
@@ -533,6 +595,14 @@ class MainWindow(QMainWindow):
         ("det_minsound", "value", float),
         ("det_padding", "value", float),
         ("exp_norm_db", "value", float),
+        ("exp_norm_lufs", "value", float),
+        ("exp_norm_mode", "currentIndex", int),
+        ("exp_highpass", "currentIndex", int),
+        ("exp_curve", "currentIndex", int),
+        ("exp_loop_fade", "value", float),
+        ("exp_variants", "value", int),
+        ("exp_variant_pitch", "value", float),
+        ("exp_variant_volume", "value", float),
         ("exp_fade_in", "value", float),
         ("exp_fade_out", "value", float),
         ("exp_format", "currentIndex", int),
@@ -541,7 +611,7 @@ class MainWindow(QMainWindow):
         ("exp_rate", "currentIndex", int),
         ("name_digits", "value", int),
     ]
-    _persisted_checks = ["det_auto", "exp_mono", "exp_norm", "exp_subdir", "exp_overwrite", "exp_csv", "exp_open", "exp_preview"]
+    _persisted_checks = ["det_auto", "exp_mono", "exp_norm", "exp_trim", "exp_subdir", "exp_overwrite", "exp_csv", "exp_open", "exp_preview", "name_repeats"]
 
     def _load_settings(self):
         s = self.settings
@@ -563,6 +633,10 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geo)
         self._refresh_presets()
         self._on_format_changed(self.exp_format.currentText())
+        self._on_norm_mode()
+        n = self.exp_variants.value()
+        self.exp_variant_pitch.setEnabled(n > 0)
+        self.exp_variant_volume.setEnabled(n > 0)
 
     def _save_settings(self):
         s = self.settings
@@ -740,7 +814,9 @@ class MainWindow(QMainWindow):
         self._updating = False
         self._refresh_all()
 
-    def _refresh_all(self):
+    def _refresh_all(self, *_):
+        for t in self.tracks:
+            t.number_repeats = self.name_repeats.isChecked()
         self.wave.template = self.template
         self._fill_table()
         t = self.track
@@ -748,7 +824,7 @@ class MainWindow(QMainWindow):
         if t is not None and row >= 0:
             self.track_list.item(row).setText(self._track_label(t))
         has_track = t is not None
-        for w in (self.btn_paste, self.btn_export, self.a_export, self.a_remove, self.a_play_all, self.a_play_track):
+        for w in (self.btn_paste, self.btn_variations, self.det_auto_threshold, self.btn_export, self.a_export, self.a_remove, self.a_play_all, self.a_play_track, self.a_loop):
             w.setEnabled(has_track)
         self.btn_export_all.setEnabled(len(self.tracks) > 0)
         self.a_export_all.setEnabled(len(self.tracks) > 0)
@@ -782,8 +858,15 @@ class MainWindow(QMainWindow):
                 flags |= Qt.ItemIsEditable
                 if not seg.name.strip():
                     name_item.setForeground(Qt.gray)
+            if editable and seg.name.strip() and names[r] != seg.name.strip():
+                name_item.setToolTip(f"Nom du fichier : {names[r]}")  # noms répétés numérotés, doublons
             name_item.setFlags(flags)
-            self.table.setItem(r, 4, name_item)
+            self.table.setItem(r, COL_NAME, name_item)
+            loop_item = QTableWidgetItem("")
+            loop_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            loop_item.setCheckState(Qt.Checked if seg.loop else Qt.Unchecked)
+            loop_item.setToolTip("Boucle sans coupure (L)")
+            self.table.setItem(r, COL_LOOP, loop_item)
         if 0 <= self.wave.selected < len(segs):
             self.table.selectRow(self.wave.selected)
         self._updating = False
@@ -796,7 +879,16 @@ class MainWindow(QMainWindow):
             self.wave.select(rows[0].row())
 
     def _on_table_edit(self, item):
-        if self._updating or item.column() != 4 or self.track is None:
+        if self._updating or self.track is None:
+            return
+        if item.column() == COL_LOOP:
+            seg = self.track.segments[item.row()]
+            if seg.loop != (item.checkState() == Qt.Checked):
+                self._push_undo()
+                seg.loop = item.checkState() == Qt.Checked
+                self.wave.update()
+            return
+        if item.column() != COL_NAME:
             return
         self._push_undo()
         self.track.segments[item.row()].name = sanitize_filename(item.text()) if item.text().strip() else ""
@@ -869,6 +961,47 @@ class MainWindow(QMainWindow):
         self._refresh_all()
         self.statusBar().showMessage("Détection relancée. Ctrl+Z pour revenir au découpage précédent.", 6000)
 
+    def auto_threshold(self):
+        t = self.track
+        if t is None:
+            return
+        db = estimate_threshold(t.data, t.samplerate)
+        self.det_threshold.setValue(db)
+        self.detect(all_tracks=False)
+        self.statusBar().showMessage(f"Seuil réglé à {db:.0f} dB d'après le bruit de fond, détection relancée.", 6000)
+
+    def find_variations(self):
+        t = self.track
+        if t is None or not t.segments:
+            return
+        groups = group_variations(t.data, t.samplerate, t.segments)
+        self._push_undo()
+        # Une lettre par type de son, dans l'ordre : les variantes partagent la leur
+        letters: dict[str, str] = {}
+        for i, (seg, g) in enumerate(zip(t.segments, groups)):
+            key = f"g{g}" if g >= 0 else f"s{i}"
+            if key not in letters:
+                k = len(letters)
+                letters[key] = LETTERS[k] if k < 26 else LETTERS[k // 26 - 1] + LETTERS[k % 26]
+            seg.name = f"{t.base_title or sanitize_filename(t.path.stem)}_{letters[key]}"
+        count = len({g for g in groups if g >= 0})
+        self.name_multi.setChecked(True)
+        self.name_repeats.setChecked(True)
+        self._on_naming_changed()
+        self.statusBar().showMessage(
+            f"{count} groupe(s) de variantes : les sons qui se ressemblent portent le même nom. Renomme-les dans le tableau."
+            if count else "Aucune variante trouvée : chaque son est différent.", 10000)
+
+    def toggle_loop(self):
+        t = self.track
+        idx = self.wave.selected
+        if t is None or not 0 <= idx < len(t.segments) or self.table.state() == QAbstractItemView.EditingState:
+            return
+        self._push_undo()
+        t.segments[idx].loop = not t.segments[idx].loop
+        self._fill_table()
+        self.wave.update()
+
     def _on_naming_changed(self, *_):
         if self._updating or self.track is None:
             return
@@ -925,8 +1058,16 @@ class MainWindow(QMainWindow):
         if not keep_queue:
             self._queue = []
         seg = t.segments[idx]
-        if self.exp_preview.isChecked():
-            clip, sr = process_segment(t.data, t.samplerate, seg, self._export_settings())
+        if self.exp_preview.isChecked() or seg.loop:
+            settings = self._export_settings() if self.exp_preview.isChecked() else ExportSettings(fade_out_ms=0, loop_crossfade_ms=self.exp_loop_fade.value())
+            params = variation_params(settings.variants, settings.variant_pitch, settings.variant_volume, seg.start % 2147483647) if self.exp_preview.isChecked() else []
+            # L'aperçu tire au hasard l'original ou une variation, comme le ferait un jeu
+            pick = random.randint(0, len(params))
+            if pick:
+                settings.pitch_semitones, settings.gain_db = params[pick - 1]
+            clip, sr = process_segment(t.data, t.samplerate, seg, settings)
+            if seg.loop:
+                clip = np.tile(clip, (3, 1))  # trois tours pour entendre la jonction
             self._play_clip(clip, sr, seg.start)
         else:
             self._play_clip(t.data[seg.start : seg.end], t.samplerate, seg.start)
@@ -1054,7 +1195,22 @@ class MainWindow(QMainWindow):
             fade_out_ms=self.exp_fade_out.value(),
             wav_subtype=WAV_DEPTHS[self.exp_wav.currentIndex()][1],
             mp3_quality=MP3_QUALITIES[self.exp_mp3.currentIndex()][1],
+            normalize_mode=NORM_MODES[self.exp_norm_mode.currentIndex()][1],
+            normalize_lufs=self.exp_norm_lufs.value(),
+            highpass_hz=HIGHPASS[self.exp_highpass.currentIndex()][1],
+            trim=self.exp_trim.isChecked(),
+            trim_db=self.det_threshold.value(),
+            fade_curve=FADE_CURVES[self.exp_curve.currentIndex()][1],
+            loop_crossfade_ms=self.exp_loop_fade.value(),
+            variants=self.exp_variants.value(),
+            variant_pitch=self.exp_variant_pitch.value(),
+            variant_volume=self.exp_variant_volume.value(),
         )
+
+    def _on_norm_mode(self, *_):
+        lufs = NORM_MODES[self.exp_norm_mode.currentIndex()][1] == "lufs"
+        self.exp_norm_db.setVisible(not lufs)
+        self.exp_norm_lufs.setVisible(lufs)
 
     def export_current(self):
         if self.track:
@@ -1075,7 +1231,7 @@ class MainWindow(QMainWindow):
             if not out:
                 return
         settings = self._export_settings()
-        total = sum(len(t.segments) for t in tracks)
+        total = sum(len(t.segments) for t in tracks) * (1 + settings.variants)
         progress = QProgressDialog("Export…", "Annuler", 0, len(tracks), self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(200)
@@ -1091,7 +1247,7 @@ class MainWindow(QMainWindow):
                 files = export_track(t, target, settings, overwrite=self.exp_overwrite.isChecked(), template=self.template)
                 exported.append((t, files))
             if self.exp_csv.isChecked() and exported:
-                write_listing(Path(out) / LISTING_NAME, exported)
+                write_listing(Path(out) / LISTING_NAME, exported, variants=settings.variants)
         except Exception as exc:
             progress.cancel()
             done = sum(len(f) for _, f in exported)
@@ -1117,10 +1273,15 @@ class MainWindow(QMainWindow):
             "<b>3. Ajuster</b> : glisse les bords d'un son, glisse dans une zone vide pour en créer un, "
             "clic droit pour couper, fusionner ou supprimer. Ctrl+Z annule.<br>"
             "<b>4. Écouter</b> : clic sur un son ou Espace, ↑/↓ pour passer d'un son à l'autre, Ctrl+Espace pour tout écouter.<br>"
-            "<b>5. Nommer</b> : un titre numéroté ou un nom par son. Le modèle (ex. SFX_{titre}_{n}) s'applique à toutes les pistes.<br>"
-            "<b>6. Exporter</b> : WAV, MP3 ou OGG, avec mono, fréquence, normalisation, fondus et liste CSV en option.<br>"
+            "<b>5. Nommer</b> : un titre numéroté ou un nom par son. Le modèle (ex. SFX_{titre}_{n}) s'applique à toutes les pistes. "
+            "« Repérer les variantes » donne le même nom aux sons qui se ressemblent ; les noms répétés sont numérotés (pas_01, pas_02).<br>"
+            "<b>6. Exporter</b> : WAV, MP3 ou OGG, mono, fréquence, normalisation en crête ou en LUFS, coupe-bas, rognage, fondus "
+            "(linéaires, doux ou rapides) et liste CSV en option. « Variations par son » ajoute des versions plus aiguës ou graves "
+            "(porte_v1, porte_v2…) pour éviter la répétition dans un jeu.<br>"
+            "<b>Boucles</b> : coche « Boucle » dans le tableau (ou touche L) pour une ambiance : la fin du son est fondue sur son début, "
+            "sans clic. Une boucle s'écoute trois fois de suite.<br>"
             "<b>Session</b> : Ctrl+S enregistre ton découpage pour le reprendre plus tard.<br><br>"
-            "Raccourcis : Espace écouter · Échap stop · ↑/↓ son précédent/suivant · Suppr supprimer · Ctrl+Z / Ctrl+Y · "
+            "Raccourcis : Espace écouter · Échap stop · ↑/↓ son précédent/suivant · Suppr supprimer · L boucle · Ctrl+Z / Ctrl+Y · "
             "molette zoom · Maj+molette défiler · double-clic zoom sur un son · Ctrl+0 tout afficher.",
         )
 

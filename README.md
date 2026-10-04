@@ -5,11 +5,13 @@ Application Windows pour découper des pistes de bruitages (SFX) en sons sépar�
 ## Fonctionnalités
 
 - **Une ou plusieurs pistes** : glisse des fichiers ou un dossier entier dans la fenêtre (WAV, MP3, OGG, FLAC, AIFF).
-- **Détection automatique** des sons séparés par du silence, avec seuil, silence minimum, son minimum et marge réglables, et des **préréglages** (fournis ou enregistrés par toi).
+- **Détection automatique** des sons séparés par du silence, avec seuil, silence minimum, son minimum et marge réglables, et des **préréglages** (fournis ou enregistrés par toi). Le bouton **Auto** règle le seuil d'après le bruit de fond de la piste.
 - **Forme d'onde éditable** : glisser les bords d'un son, dessiner un nouveau son, couper, fusionner, supprimer, annuler (Ctrl+Z).
 - **Écoute** d'un son d'un clic (ou Espace), son par son avec ↑/↓, tout à la suite (Ctrl+Espace), en option avec les réglages d'export appliqués.
-- **Nommage** : un titre numéroté ou un nom par son (tapé dans le tableau ou collé sous forme de liste), avec un **modèle** commun comme `SFX_{titre}_{n}` (étiquettes `{titre}`, `{n}`, `{piste}`).
-- **Export** en WAV (16, 24 ou 32 bits), MP3 ou OGG, avec en option : mono, fréquence (22,05 / 44,1 / 48 kHz), normalisation, fondus, un sous-dossier par piste et une **liste CSV** des sons (`liste_sons.csv`).
+- **Nommage** : un titre numéroté ou un nom par son (tapé dans le tableau ou collé sous forme de liste), avec un **modèle** commun comme `SFX_{titre}_{n}` (étiquettes `{titre}`, `{n}`, `{piste}`). Les noms répétés sont numérotés (`pas_01`, `pas_02`) et **Repérer les variantes** donne le même nom aux sons qui se ressemblent.
+- **Export** en WAV (16, 24 ou 32 bits), MP3 ou OGG, avec en option : mono, fréquence (22,05 / 44,1 / 48 kHz), normalisation en crête ou en **LUFS** (volume perçu), coupe-bas, rognage des silences restants, fondus linéaires, doux ou rapides, un sous-dossier par piste et une **liste CSV** des sons (`liste_sons.csv`).
+- **Variations** : chaque son peut aussi être exporté en versions un peu plus aiguës ou graves et moins fortes (`porte_v1`, `porte_v2`…), pour éviter l'effet répétitif dans un jeu.
+- **Boucles sans coupure** : coche « Boucle » dans le tableau (ou touche L) pour une ambiance ; la fin du son est fondue sur son début à l'export.
 - **Sessions** : Ctrl+S enregistre le découpage dans un fichier `.autocut` pour le reprendre plus tard.
 - Thème sombre, réglages mémorisés d'une session à l'autre.
 

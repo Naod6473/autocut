@@ -167,7 +167,7 @@ class WaveformView(QWidget):
             p.drawLine(QPointF(x0, 0), QPointF(x0, h))
             p.drawLine(QPointF(x1, 0), QPointF(x1, h))
             if x1 - x0 > 30:
-                label = p.fontMetrics().elidedText(f"{i + 1}. {names[i]}", Qt.ElideRight, int(x1 - x0 - 12))
+                label = p.fontMetrics().elidedText(f"{i + 1}. {names[i]}{' ⟳' if seg.loop else ''}", Qt.ElideRight, int(x1 - x0 - 12))
                 # Pastille sombre derrière le nom pour qu'il reste lisible sur la forme d'onde
                 box = QRectF(x0 + 3, 3, p.fontMetrics().horizontalAdvance(label) + 8, 16)
                 p.setPen(Qt.NoPen)
