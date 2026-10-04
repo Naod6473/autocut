@@ -27,7 +27,7 @@ Pour une version stable, crée un tag `v0.1.0` : le .exe est alors publié dans 
 
 Chaque fabrication produit aussi `Autocut.msix` (artifact **Autocut-msix**), le paquet à déposer dans Partner Center. Il n'est pas signé : Microsoft le signe à la certification.
 
-Pour publier une version : crée un tag `vX.Y.Z` (ex. `v0.2.0`) plus grand que le précédent. La release GitHub contient alors `Autocut.exe` et `Autocut.msix` en version `X.Y.Z.0`. Les identifiants du paquet sont dans `packaging/AppxManifest.xml` ; les logos du Store sont générés par `tools/make_icon.py`.
+Pour publier une version : crée un tag `vX.Y.Z` (ex. `v0.2.0`) plus grand que le précédent. La release GitHub contient alors `Autocut.exe` et `Autocut.msix` en version `X.Y.Z.0`. Les identifiants du paquet sont dans `packaging/AppxManifest.xml` ; les logos du Store sont générés par `tools/make_icon.py`. La politique de confidentialité demandée par le Store est dans [PRIVACY.md](PRIVACY.md).
 
 ## Fabriquer le .exe soi-même
 
