@@ -1,0 +1,44 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Installer les dépendances
+        run: python -m pip install -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q
+      - name: Fabriquer Autocut.exe
+        run: pyinstaller --noconfirm --clean autocut.spec
+      - name: Vérifier que l'exe démarre
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Autocut.exe -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { Write-Error "Autocut.exe s'est arrêté au démarrage (code $($p.ExitCode))"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Autocut-windows
+          path: dist/Autocut.exe
+      - name: Publier la version
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Autocut.exe
