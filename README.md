@@ -23,6 +23,12 @@ Chaque modification de la branche `main` fabrique `Autocut.exe` automatiquement 
 
 Pour une version stable, crée un tag `v0.1.0` : le .exe est alors publié dans l'onglet **Releases**.
 
+## Microsoft Store
+
+Chaque fabrication produit aussi `Autocut.msix` (artifact **Autocut-msix**), le paquet à déposer dans Partner Center. Il n'est pas signé : Microsoft le signe à la certification.
+
+Pour publier une version : crée un tag `vX.Y.Z` (ex. `v0.2.0`) plus grand que le précédent. La release GitHub contient alors `Autocut.exe` et `Autocut.msix` en version `X.Y.Z.0`. Les identifiants du paquet sont dans `packaging/AppxManifest.xml` ; les logos du Store sont générés par `tools/make_icon.py`.
+
 ## Fabriquer le .exe soi-même
 
 1. Installe Python 3.10 ou plus depuis [python.org](https://www.python.org/downloads/) en cochant **Add python.exe to PATH**.

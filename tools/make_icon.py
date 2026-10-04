@@ -1,4 +1,4 @@
-"""Dessine l'icône d'Autocut et écrit autocut/assets/autocut.ico et autocut.png.
+"""Dessine l'icône d'Autocut : autocut/assets/autocut.ico, autocut.png et les logos du Store (packaging/Assets).
 
 À relancer seulement si l'icône change. Nécessite PySide6 et Pillow (python -m pip install Pillow).
 """
@@ -10,7 +10,17 @@ from PIL import Image
 from PySide6.QtCore import QBuffer, QByteArray, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF
 
-ASSETS = Path(__file__).resolve().parent.parent / "autocut" / "assets"
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / "autocut" / "assets"
+STORE_ASSETS = ROOT / "packaging" / "Assets"
+# Logos exigés par le manifeste MSIX (nom de fichier -> taille en pixels)
+STORE_LOGOS = {
+    "StoreLogo.png": 50,
+    "Square44x44Logo.png": 44,
+    "Square150x150Logo.png": 150,
+    # Variantes « unplated » : l'icône s'affiche sans fond coloré dans la barre des tâches
+    **{f"Square44x44Logo.targetsize-{s}_altform-unplated.png": s for s in (16, 24, 32, 48, 256)},
+}
 SIZES = [16, 24, 32, 48, 64, 128, 256]
 ACCENT = QColor("#ff8a3d")
 BARS = [(30, 32), (56, 84), (82, 144), (108, 104), (134, 160), (160, 96), (186, 60), (212, 24)]  # (x, hauteur) sur 256
@@ -62,7 +72,10 @@ def main():
     images = [to_pil(draw(s)) for s in SIZES]
     images[-1].save(ASSETS / "autocut.ico", sizes=[(s, s) for s in SIZES], append_images=images[:-1])
     images[-1].save(ASSETS / "autocut.png")
-    print("Icône écrite dans", ASSETS)
+    STORE_ASSETS.mkdir(parents=True, exist_ok=True)
+    for name, size in STORE_LOGOS.items():
+        to_pil(draw(size)).save(STORE_ASSETS / name)
+    print("Icônes écrites dans", ASSETS, "et", STORE_ASSETS)
 
 
 if __name__ == "__main__":
