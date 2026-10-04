@@ -25,6 +25,7 @@ COLORS = {
     "text": QColor("#e8e8e8"),
     "playhead": QColor("#ffffff"),
     "draft": QColor(255, 255, 255, 50),
+    "label_bg": QColor(22, 24, 28, 200),
 }
 
 
@@ -166,9 +167,14 @@ class WaveformView(QWidget):
             p.drawLine(QPointF(x0, 0), QPointF(x0, h))
             p.drawLine(QPointF(x1, 0), QPointF(x1, h))
             if x1 - x0 > 30:
+                label = p.fontMetrics().elidedText(f"{i + 1}. {names[i]}", Qt.ElideRight, int(x1 - x0 - 12))
+                # Pastille sombre derrière le nom pour qu'il reste lisible sur la forme d'onde
+                box = QRectF(x0 + 3, 3, p.fontMetrics().horizontalAdvance(label) + 8, 16)
+                p.setPen(Qt.NoPen)
+                p.setBrush(COLORS["label_bg"])
+                p.drawRoundedRect(box, 4, 4)
                 p.setPen(COLORS["text"])
-                label = f"{i + 1}. {names[i]}"
-                p.drawText(QRectF(x0 + 4, 2, x1 - x0 - 8, 16), Qt.AlignLeft | Qt.AlignVCenter, p.fontMetrics().elidedText(label, Qt.ElideRight, int(x1 - x0 - 8)))
+                p.drawText(box, Qt.AlignCenter, label)
 
         if self._draft is not None:
             a, b = sorted(self._draft)

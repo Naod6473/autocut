@@ -177,6 +177,8 @@ class Section(QWidget):
         super().__init__(parent)
         self.setObjectName("section")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        # Repliée, la section garde la hauteur de son titre au lieu de s'étirer
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.header = QToolButton()
         self.header.setObjectName("sectionHeader")
         self.header.setText(title)
