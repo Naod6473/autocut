@@ -816,6 +816,10 @@ def main():
     sys.excepthook = excepthook
     win = MainWindow()
     win.show()
+    if "--selftest" in sys.argv:
+        # Utilisé par la CI : vérifie que l'exe démarre (tous les modules présents) puis quitte.
+        QTimer.singleShot(1500, app.quit)
+        sys.exit(app.exec())
     files = [Path(a) for a in sys.argv[1:] if Path(a).suffix.lower() in SUPPORTED_INPUT]
     if files:
         win.add_files(files)

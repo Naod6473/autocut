@@ -29,10 +29,9 @@ jobs:
       - name: Vérifier que l'exe démarre
         shell: pwsh
         run: |
-          $p = Start-Process dist\Autocut.exe -PassThru
-          Start-Sleep -Seconds 20
-          if ($p.HasExited) { Write-Error "Autocut.exe s'est arrêté au démarrage (code $($p.ExitCode))"; exit 1 }
-          Stop-Process -Id $p.Id -Force
+          $p = Start-Process dist\Autocut.exe -ArgumentList "--selftest" -PassThru
+          if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; Write-Error "Autocut.exe ne s'est pas fermé : il a probablement affiché une erreur au démarrage"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "Autocut.exe a échoué au démarrage (code $($p.ExitCode))"; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: Autocut-windows
