@@ -1,0 +1,6 @@
+# QtMultimedia (lecture audio) est dans PySide6-Addons, pas dans Essentials
+PySide6-Essentials>=6.6
+PySide6-Addons>=6.6
+numpy>=1.24
+soundfile>=0.12.1
+soxr>=0.3

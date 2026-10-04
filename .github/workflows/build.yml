@@ -1,0 +1,67 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Installer les dépendances
+        run: python -m pip install -r requirements-dev.txt
+      - name: Tests
+        run: python -m pytest -q
+      - name: Numéro de version depuis le tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python tools/set_version.py ${{ github.ref_name }}
+      - name: Fabriquer Autocut.exe
+        run: pyinstaller --noconfirm --clean autocut.spec
+      - name: Vérifier que l'exe démarre
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Autocut.exe -ArgumentList "--selftest" -PassThru
+          if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; Write-Error "Autocut.exe ne s'est pas fermé : il a probablement affiché une erreur au démarrage"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "Autocut.exe a échoué au démarrage (code $($p.ExitCode))"; exit 1 }
+      - name: Fabriquer Autocut.msix (Microsoft Store)
+        shell: pwsh
+        run: |
+          # Sur un tag vX.Y.Z le paquet prend la version X.Y.Z.0 ; sinon une version de test 0.0.<numéro du passage>.0
+          if ("${{ github.ref }}" -like "refs/tags/v*") { $v = "${{ github.ref_name }}".TrimStart("v") } else { $v = "0.0.${{ github.run_number }}" }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Error "Tag invalide : utilise vX.Y.Z (ex. v0.2.0)"; exit 1 }
+          $pkg = "build\msix"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          Copy-Item dist\Autocut.exe $pkg
+          Copy-Item packaging\Assets $pkg -Recurse
+          (Get-Content packaging\AppxManifest.xml -Raw -Encoding utf8).Replace("{VERSION}", "$v.0") | Set-Content "$pkg\AppxManifest.xml" -Encoding utf8
+          $makeappx = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\makeappx.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $makeappx) { Write-Error "makeappx.exe introuvable (Windows SDK)"; exit 1 }
+          & $makeappx.FullName pack /d $pkg /p dist\Autocut.msix /o
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Autocut-windows
+          path: dist/Autocut.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Autocut-msix
+          path: dist/Autocut.msix
+      - name: Publier la version
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Autocut.exe
+            dist/Autocut.msix
